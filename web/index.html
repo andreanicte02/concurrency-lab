@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Concurrency Lab</title>
+  <meta name="description" content="Classic Java concurrency bugs — race conditions, check-then-act and the sleeping barber — reproduced on a real JVM and fixed.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="wrap hero">
+    <p class="eyebrow">Java 21 · threads · locks</p>
+    <h1>Concurrency Lab</h1>
+    <p class="lede">
+      Three classic concurrency bugs, each reproduced on a real JVM and then fixed.
+      Every number on this page comes from running the project's own code on GitHub Actions —
+      nothing is simulated except the step-by-step walkthrough below.
+    </p>
+    <p class="links">
+      <a class="btn" href="https://github.com/andreanicte02/concurrency-lab">View source</a>
+      <a class="btn ghost" href="https://github.com/andreanicte02/concurrency-lab/releases/latest">Download the jar</a>
+    </p>
+    <p class="meta" id="meta">Loading results…</p>
+  </header>
+
+  <main class="wrap">
+    <!-- 1. Counter ------------------------------------------------------------------->
+    <section class="card" id="counter">
+      <p class="num">01</p>
+      <h2>The lost update</h2>
+      <p>
+        Several threads run <code>count = count + 1</code> on the same variable. It looks like one
+        step, but the CPU does three: <strong>read</strong> the value, <strong>add</strong> one,
+        <strong>write</strong> it back. If two threads read before either writes, one increment
+        disappears.
+      </p>
+
+      <h3>Try it: you are the scheduler</h3>
+      <p class="hint">Click the threads in any order. Can you make two increments produce&nbsp;1?</p>
+      <div class="stepper" id="stepper">
+        <div class="threads">
+          <div class="thread" data-t="0">
+            <div class="thread-head"><span class="tname">Thread A</span><span class="reg">register: <b>–</b></span></div>
+            <ol class="ops"></ol>
+            <button type="button" class="step">Next step</button>
+          </div>
+          <div class="memory">
+            <span class="label">shared <code>count</code></span>
+            <span class="value" id="mem">0</span>
+            <span class="lockstate" id="lockstate" hidden>🔒 free</span>
+          </div>
+          <div class="thread" data-t="1">
+            <div class="thread-head"><span class="tname">Thread B</span><span class="reg">register: <b>–</b></span></div>
+            <ol class="ops"></ol>
+            <button type="button" class="step">Next step</button>
+          </div>
+        </div>
+        <div class="stepper-bar">
+          <label class="toggle"><input type="checkbox" id="useLock"> Use a lock</label>
+          <button type="button" class="ghostbtn" id="showBug">Show me the bug</button>
+          <button type="button" class="ghostbtn" id="reset">Reset</button>
+        </div>
+        <p class="verdict" id="verdict" aria-live="polite"></p>
+      </div>
+
+      <h3>On a real JVM</h3>
+      <p class="hint" id="counterCaption"></p>
+      <div class="chart" id="counterChart" role="img"></div>
+      <details class="code">
+        <summary>The fixes</summary>
+<pre><code><span class="c">// broken: read-modify-write race</span>
+count = count + 1;
+
+<span class="c">// synchronized: one thread at a time</span>
+public synchronized void increment() { count = count + 1; }
+
+<span class="c">// ReentrantLock: always unlock in finally</span>
+lock.lock();
+try { count = count + 1; } finally { lock.unlock(); }
+
+<span class="c">// AtomicLong: lock-free compare-and-swap</span>
+count.incrementAndGet();</code></pre>
+      </details>
+    </section>
+
+    <!-- 2. Bank ---------------------------------------------------------------------->
+    <section class="card" id="bank">
+      <p class="num">02</p>
+      <h2>The overdrawn account</h2>
+      <p>
+        Customers at different ATMs withdraw from the same account. Each ATM checks
+        <code>if (balance &gt;= amount)</code> and then subtracts. Between the check and the update,
+        another ATM can do the same check and see the same money — so the bank hands out cash that
+        isn't there. This is the <em>check-then-act</em> race.
+      </p>
+      <p class="hint" id="bankCaption"></p>
+      <div class="chart" id="bankChart" role="img"></div>
+      <details class="code">
+        <summary>The fix</summary>
+<pre><code><span class="c">// The check and the update must be one atomic step.</span>
+public synchronized boolean withdraw(int amount) {
+    if (balance &gt;= amount) {
+        balance = balance - amount;
+        return true;
+    }
+    return false;
+}</code></pre>
+      </details>
+    </section>
+
+    <!-- 3. Barber -------------------------------------------------------------------->
+    <section class="card" id="barber">
+      <p class="num">03</p>
+      <h2>The sleeping barber</h2>
+      <p>
+        One barber, one chair and a small waiting room. When nobody is waiting the barber sleeps;
+        an arriving customer wakes the barber, sits down, or leaves if every chair is taken.
+        Naive versions busy-wait (burning a CPU core) or lose a wake-up and deadlock. This one uses
+        a bounded <code>BlockingQueue</code> as the waiting room: <code>offer()</code> atomically
+        claims a chair, and the barber sleeps inside <code>take()</code>.
+      </p>
+      <p class="hint" id="barberCaption"></p>
+      <div class="legend" id="barberLegend">
+        <span><i class="sw cut"></i>Haircut</span>
+        <span><i class="sw wait"></i>Waiting</span>
+        <span><i class="sw sleep"></i>Barber asleep</span>
+        <span><i class="mk">✕</i>Left — no free chair</span>
+      </div>
+      <div class="timeline" id="barberChart"></div>
+      <details class="code">
+        <summary>Event log (table view)</summary>
+        <div class="logwrap"><table id="barberLog"><thead><tr><th>time</th><th>who</th><th>event</th><th>waiting</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+
+    <section class="run">
+      <h2>Run it yourself</h2>
+<pre><code>java -jar concurrency-lab.jar counter --threads 8 --increments 1000000
+java -jar concurrency-lab.jar bank --customers 16
+java -jar concurrency-lab.jar barber --chairs 2 --haircut-ms 500
+java -jar concurrency-lab.jar all --json</code></pre>
+      <p>Needs Java 21+. Results change on every run — that is the point.</p>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    Built by <a href="https://github.com/andreanicte02">@andreanicte02</a>. Started in 2020 as a set of university exercises, rewritten in 2026.
+  </footer>
+
+  <div class="tip" id="tip" role="tooltip" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
